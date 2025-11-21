@@ -184,4 +184,121 @@ async def handle_admin_command(text, update: Update):
     if REMIND_ALL_RX.match(text):
         return await jobs.send_all_pending_reminders(None) # Needs context usually
 
+    # --- Missing Commands ---
+
+    # Delete Username
+    m = DEL_USERNAME_RX.match(text)
+    if m:
+        handle = m.group(1)
+        found = False
+        for o in globals.OWNER_DATA:
+            orig_len = len(o["entries"])
+            o["entries"] = [e for e in o["entries"] if _norm_handle(e["telegram"]) != _norm_handle(handle)]
+            if len(o["entries"]) != orig_len: found = True
+        
+        if found:
+            await db_access.rebuild_pools_preserving_rotation()
+            return f"Deleted username @{handle}."
+        return f"Username @{handle} not found."
+
+    # Delete WhatsApp
+    m = DEL_WHATSAPP_RX.match(text)
+    if m:
+        num = m.group(1)
+        found = False
+        for o in globals.OWNER_DATA:
+            orig_len = len(o["whatsapp"])
+            o["whatsapp"] = [w for w in o["whatsapp"] if _norm_phone(w["number"]) != _norm_phone(num)]
+            if len(o["whatsapp"]) != orig_len: found = True
+        
+        if found:
+            await db_access.rebuild_pools_preserving_rotation()
+            return f"Deleted WhatsApp {num}."
+            
+    # Clear Pending (Super Admin Only)
+    m = CLEAR_PENDING_RX.match(text)
+    if m:
+        if uname != globals.ADMIN_USERNAME: return "Super admin only."
+        val = m.group(1).strip()
+        cleared = False
+        for kind in ("username", "whatsapp", "app_id"):
+            bucket = globals.state["issued"].get(kind, {})
+            for uid, items in list(bucket.items()):
+                filtered = [i for i in items if i.get("value") != val]
+                if len(filtered) != len(items):
+                    bucket[uid] = filtered
+                    cleared = True
+                    # Lift ban if whatsapp cleared
+                    if kind == "whatsapp" and uid in globals.state.get("whatsapp_temp_bans", {}):
+                        del globals.state["whatsapp_temp_bans"][uid]
+        if cleared:
+            await db_access.save_state()
+            return f"Cleared pending item: {val}"
+        return f"Item {val} not found in pending list."
+
+    # Unbans
+    m = UNBAN_WHATSAPP_RX.match(text)
+    if m:
+        uid = _find_user_id_by_name(m.group(1))
+        if uid:
+            pool = await db_access.get_db_pool()
+            await pool.execute("DELETE FROM whatsapp_bans WHERE user_id=$1", uid)
+            await db_access.load_whatsapp_bans()
+            return f"Unbanned {m.group(1)} from WhatsApp."
+
+    m = UNBAN_COUNTRY_RX.match(text)
+    if m:
+        country, name = m.groups()
+        uid = _find_user_id_by_name(name)
+        if uid:
+            pool = await db_access.get_db_pool()
+            await pool.execute("DELETE FROM user_country_bans WHERE user_id=$1 AND country=$2", uid, country.lower())
+            await db_access.load_user_country_bans()
+            return f"Unbanned {name} from {country}."
+
+    # Priority & Lists
+    m = CANCEL_PRIORITY_RX.match(text)
+    if m:
+        target = m.group(1).strip().lower()
+        if target == "all":
+            globals.state["priority_queue"] = {}
+        elif _norm_owner_name(target) in globals.state.get("priority_queue", {}):
+            del globals.state["priority_queue"][_norm_owner_name(target)]
+        await db_access.save_state()
+        return "Priority queue updated."
+
+    if LIST_BANNED_RX.match(text):
+        return "Banned IDs: " + ", ".join(str(u) for u in globals.WHATSAPP_BANNED_USERS)
+
+    if LIST_COUNTRY_BANS_RX.match(text):
+        return "\n".join([f"{uid}: {bans}" for uid, bans in globals.USER_COUNTRY_BANS.items()])
+
+    if ROUND_COUNT_RX.match(text):
+        return f"User Rounds: {globals.state.get('username_round_count')}\nWA Rounds: {globals.state.get('whatsapp_round_count')}"
+
+    # Super Admin deletions
+    if uname == globals.ADMIN_USERNAME:
+        m = DELETE_ADMIN_RX.match(text)
+        if m:
+            pool = await db_access.get_db_pool()
+            await pool.execute("DELETE FROM admins WHERE username=$1", _norm_owner_name(m.group(1)))
+            await db_access.load_admins()
+            return f"Deleted admin {m.group(1)}"
+            
+        m = DELETE_USER_RX.match(text)
+        if m:
+            uid = _find_user_id_by_name(m.group(1))
+            if uid:
+                pool = await db_access.get_db_pool()
+                await pool.execute("DELETE FROM whitelisted_users WHERE user_id=$1", uid)
+                await db_access.load_whitelisted_users()
+                return f"Removed {m.group(1)} from whitelist."
+
+    m = LIST_OWNER_DETAIL_RX.match(text) or LIST_OWNER_ALIAS_RX.match(text)
+    if m:
+        name = m.group(1)
+        og = _find_owner_group(name)
+        if not og: return "Owner not found."
+        return f"Owner {name}:\nEntries: {len(og['entries'])}\nWhatsApp: {len(og['whatsapp'])}"
+
     return None
