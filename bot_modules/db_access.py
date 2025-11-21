@@ -210,4 +210,27 @@ def _preserve_entry_indices(rr_map, new_pool, list_key):
         else: rr_map[owner] = rr_map.get(owner, 0) % sz
 
 async def rebuild_pools_preserving_rotation():
-    old_user_owner_list = _owner_list_from_pool(globals.USERNAME
+    old_user_owner_list = _owner_list_from_pool(globals.USERNAME_POOL)
+    old_wa_owner_list   = _owner_list_from_pool(globals.WHATSAPP_POOL)
+
+    rr = globals.state.setdefault("rr", {})
+    old_user_owner_idx = rr.get("username_owner_idx", 0)
+    old_wa_owner_idx   = rr.get("wa_owner_idx", 0)
+    old_user_entry_idx = dict(rr.get("username_entry_idx", {}))
+    old_wa_entry_idx   = dict(rr.get("wa_entry_idx", {}))
+
+    await save_owner_directory()
+    await load_owner_directory()
+
+    new_user_owner_list = _owner_list_from_pool(globals.USERNAME_POOL)
+    new_wa_owner_list   = _owner_list_from_pool(globals.WHATSAPP_POOL)
+
+    rr["username_owner_idx"] = _preserve_owner_pointer(old_user_owner_list, new_user_owner_list, old_user_owner_idx)
+    rr["wa_owner_idx"] = _preserve_owner_pointer(old_wa_owner_list, new_wa_owner_list, old_wa_owner_idx)
+
+    rr.setdefault("username_entry_idx", old_user_entry_idx)
+    rr.setdefault("wa_entry_idx", old_wa_entry_idx)
+    _preserve_entry_indices(rr["username_entry_idx"], globals.USERNAME_POOL, "usernames")
+    _preserve_entry_indices(rr["wa_entry_idx"], globals.WHATSAPP_POOL, "numbers")
+
+    await save_state()
