@@ -226,3 +226,24 @@ async def process_message(update: Update, context):
                          if CONFIRMATION_FORWARD_GROUP_ID:
                              try: await context.bot.forward_message(chat_id=CONFIRMATION_FORWARD_GROUP_ID, message_thread_id=CONFIRMATION_FORWARD_TOPIC_ID, from_chat_id=chat_id, message_id=msg.message_id)
                              except: pass
+
+        # 7. Who Is Using (Missing in your current code)
+        m_owner = WHO_USING_REGEX.match(text)
+        if m_owner:
+            handle, phone = m_owner.groups()
+            reply = "Not found."
+            if handle:
+                key = _norm_handle(handle)
+                hits = globals.HANDLE_INDEX.get(key, [])
+                owners = sorted({h['owner'] for h in hits})
+                if owners: reply = f"Owner of @{key} → " + ", ".join(f"@{o}" for o in owners)
+            else:
+                pnorm = _norm_phone(phone)
+                rec = globals.PHONE_INDEX.get(pnorm)
+                if rec: 
+                    reply = f"Owner of {phone} → @{rec['owner']}"
+            
+            await msg.reply_text(reply)
+            return
+
+
